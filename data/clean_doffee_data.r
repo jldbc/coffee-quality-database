@@ -1,12 +1,17 @@
 library(dplyr)
+library(stringr)
 df = read.csv('/Users/jledoux/Documents/projects/coffee-quality-database/coffee_ratings_complete.csv')
 df$X = NULL
+df$X.1 = NULL
 df$view_certificate_1 = NULL
 df$view_certificate_2 = NULL
 df$Cupping.Protocol.and.Descriptors = NULL
 df$View.Green.Analysis.Details = NULL
 df$Request.a.Sample = NULL
 df$NA. = NULL
+df$NA.1 = NULL
+df$NA.2 = NULL
+df$NA.3 = NULL
 df$NA..1 = NULL
 df$NA..2 = NULL
 df$NA..3 = NULL
@@ -24,6 +29,111 @@ df$NA..3 = NULL
 # [37] "Quakers"               "Color"                 "Category.Two.Defects"  "NA.3"                 
 # [41] "Expiration"            "Certification.Body"    "Certification.Address" "Certification.Contact"
 # [45] "X.1"                   "Notes" 
+
+# row X is a test row. get rid of it. 
+
+
+##############################################
+# ALTITUDE
+##############################################
+# several different encoding chemes here, usually depicting a range 
+# 1: get unit (m / ft)
+# 2: locate numbers in strings, split to two columns 
+# 3: third column as the middle of the range, we'll call this the altitude 
+df$Altitude = tolower(df$Altitude)
+unique(df$Altitude)
+df$unit_of_measurement = 'm'
+
+# first, there are some garbage values in this column. drop them. 
+drops = c('unkown','TEST', 'none', 'n/a', 'Huanuco', '-(average)', '-')
+df[df$Altitude %in% drops,'Altitude'] = ''
+
+# now get units. default is meters, find non-meters and change their value 
+# remaining units: (none), 公尺, P.S.N.M, feet, msnm, mts, ft, m.s.n.m., P.S.N.M, MASL, mals, F, Feet, Pies, meters above sea level
+
+# units in dataset:
+# msnm: meters above sea level 
+# 公尺: meters 
+# P.S.N.M: feet above sea lvel (pies sobre el nivel del mar)
+# mts: meters 
+# MASL: meters above sea level 
+# mals: meters above sea level 
+# Pies: feet 
+
+# everything besides the feet-related ones can stay in meters
+# unknowns to be forced to empty strings 
+
+unique(df$Altitude)
+feets = c('feet','ft',' f', 'pies', 'P.S.N.M:', 'psnm')
+
+# first check to be sure this isn't replacing any of the wrong values 
+fun = function(x) {df[grep(x, df$Altitude),'Altitude']}
+sapply(feets, fun)
+
+feets = c('feet','ft',' f', 'pies')
+fun = function(x) {
+  match_vals = df[grep(x, df$Altitude),'Altitude']
+  df[df$Altitude %in% match_vals,'unit_of_measurement'] <<- 'ft' # assign value, sticks outside of function bc double arrow
+  return(df)
+}
+df2 = sapply(feets, fun)
+sapply(feets, fun)
+
+# of those with no declared unit, can we assign one? 
+table(df[df$unit_of_measurement=='ft','Country.of.Origin'])
+table(df[df$Country.of.Origin=='Guatemala','unit_of_measurement'])
+
+# always assign ft if a us state/territory, guatemala is a bit of a mixed bag 
+df[df$Country.of.Origin %in% c('United States (Hawaii)', 'United States (Puerto Rico)'),'unit_of_measurement'] = 'ft'
+
+# grab lower and upper bound numbers for altitude 
+df$Altitude = gsub(",","",df$Altitude) # commas mess up the string splitting
+df$alt = sapply(df$Altitude, function(x) str_extract_all(x, "\\d+\\.*\\d*")[[1]]) #[0-9]+
+Split <- strsplit(as.character(df$alt), ", ", fixed = TRUE)
+df$alt_low <- sapply(Split, "[", 1)
+df$alt_high <- sapply(Split, "[", 2)
+df$alt_low = sapply(df$alt_low, function(x) str_extract_all(x, "\\d+\\.*\\d*")[[1]])
+df$alt_high = sapply(df$alt_high, function(x) str_extract_all(x, "\\d+\\.*\\d*")[[1]])
+
+#remove commas and spaces, make numeric
+df$alt_low = gsub('\\.','',df$alt_low)
+df$alt_high = gsub('\\.','',df$alt_high)
+
+# replace zeros with blanks
+df[df$alt_low==0,'alt_low'] = NA
+
+# if no available high alt, replace alt high with alt low 
+df[is.na(df$alt_high),'alt_high'] = df[is.na(df$alt_high),'alt_low']
+
+# mean alt column to deal with farms where we're provided a range 
+df$alt_low = as.numeric(df$alt_low)
+df$alt_high = as.numeric(df$alt_high)
+df$alt_mean = rowMeans(df[,c('alt_low','alt_high')],na.rm=TRUE)
+
+# if ht. > 3500 it's probably feet. most points in guatemala are < 3500 m 
+df[df$Country.of.Origin=='Guatemala',]
+df[(df$Country.of.Origin=='Guatemala') & (df$Altitude>3500),'unit_of_measurement'] = 'ft'
+
+# standardize units of measurement  - 1 ft = 0.3048 m 
+df[df$unit_of_measurement=='ft',c('alt_low','alt_high','alt_mean')] = df[df$unit_of_measurement=='ft',c('alt_low','alt_high','alt_mean')]*0.3048
+
+# did it work? 
+head(df[,c('Altitude','alt_low','alt_high','alt_mean','unit_of_measurement')], 100)
+
+
+##############################
+# MOISTURE: make it a decimal 
+##############################
+df$Moisture = substr(df$Moisture,1,nchar(as.character(df$Moisture))-2)
+df$Moisture = as.numeric(df$Moisture) / 100
+
+
+##############################
+# DEFECTS: make numeric 
+##############################
+df$Category.One.Defects = as.numeric(substr(df$Category.One.Defects,1,nchar(as.character(df$Category.One.Defects))-13))
+df$Category.Two.Defects = as.numeric(substr(df$Category.Two.Defects,1,nchar(as.character(df$Category.Two.Defects))-13))
+
 
 
 ##############################################
@@ -204,176 +314,211 @@ df[df$Farm.Name %in% various,'Farm.Name'] = 'various'
 ##############################################
 
 sort(unique(tolower(df$Mill)))
+df$Mill = tolower(df$Mill)
 # 
 # [1] ""                                                                                       
 # [2] "-"                                                                                      
 # [3] "--" 
-# 
+df[df$Mill %in% c('-','--'),'Mill'] = ''
+
 # 
 # [10] "agroindustrial unidas de mexico, s.a. de c.v. sucursal tuxtla"                          
 # [11] "agroindustrias unidas de mexico"                                                        
 # [12] "agroindustrias unidas de mexico s.a. de c.v."                                           
 # [13] "agroindustrias unidas de mexico, s.s. de c.v. sucursal tuxtla" 
-# 
+df[df$Mill %in% c('agroindustrial unidas de mexico, s.a. de c.v. sucursal tuxtla','agroindustrias unidas de mexico s.a. de c.v.',
+                       'agroindustrias unidas de mexico, s.s. de c.v. sucursal tuxtla'),'Mill'] = 'agroindustrias unidas de mexico'
+
 # 
 # 
 # [22] "angel albino corzo, chiapas"                                                            
 # [23] "angel albio corzo, chiapas"                                                             
 # [24] "angel de albino de corzo"   
-# 
+df[df$Mill %in% c('angel albio corzo, chiapas','angel de albino de corzo'),'Mill'] = 'angel albino corzo, chiapas'
+
 # 
 # [40] "baishencun coffee farm百勝村咖啡莊園"                                                   
 # [41] "baishengcun coffee 百勝村咖啡莊園" 
-# 
+df[df$Mill %in% c("baishencun coffee farm百勝村咖啡莊園"),'Mill'] = 'baishengcun coffee 百勝村咖啡莊園'
+
 # 
 # 
 # [44] "beneficio 2000"                                                                         
 # [45] "beneficio 2000 km 25.5 carretera a el salvador, guatemala phone (502) 6661-2800"        
 # [46] "beneficio 2000 km. 25.5 carretera a el salvador, guatemala"  
-# 
+df[df$Mill %in% c("beneficio 2000 km 25.5 carretera a el salvador, guatemala phone (502) 6661-2800", 
+                  "beneficio 2000 km. 25.5 carretera a el salvador, guatemala"),'Mill'] = 'beneficio 2000'
+
 # 
 # [47] "beneficio atlantic condega"                                                             
 # [48] "beneficio atlantic condega." 
-# 
+df[df$Mill %in% c("beneficio atlantic condega."),'Mill'] = 'beneficio atlantic condega'
+
 # 
 # [50] "beneficio atlantic sebaco"                                                              
 # [51] "beneficio atlanticsebaco" 
-# 
+df[df$Mill %in% c("beneficio atlanticsebaco"),'Mill'] = 'beneficio atlantic sebaco'
+
 # 
 # 60] "beneficio exportacafe agua santa"                                                       
 # [61] "beneficio exportcafe agua santa" 
-# 
+df[df$Mill %in% c("beneficio exportcafe agua santa"),'Mill'] = 'beneficio exportacafe agua santa'
+
 # 
 # 
 # 
 # [63] "beneficio ixchel"                                                                       
 # [64] "beneficio ixchell"  
-# 
+df[df$Mill %in% c("beneficio ixchell"),'Mill'] = 'beneficio ixchel'
+
 # 
 # 
 # [69] "beneficio montañas"                                                                     
 # [70] "beneficio montañas del diamante" 
-# 
-# 
-# 
+df[df$Mill %in% c("beneficio montañas"),'Mill'] = 'beneficio montañas del diamante'
+
 # [74] "beneficio san carlos"                                                                   
 # [75] "beneficio san carlos. matagalpa"  
-# 
+df[df$Mill %in% c("beneficio san carlos. matagalpa"),'Mill'] = 'beneficio san carlos'
+
 # 
 # [81] "beneficio serben"                                                                       
 # [82] "beneficio serben km 21.5 carretera a villa canales" 
-# 
+df[df$Mill %in% c("beneficio serben km 21.5 carretera a villa canales"),'Mill'] = "beneficio serben"
+
 # 
 # "beneficio siembras vision (154)"                                                        
 # [84] "beneficio siembras visión (154)" 
-# 
+df[df$Mill %in% c("beneficio siembras visión (154)"),'Mill'] = 'beneficio siembras vision (154)'
+
 # 
 # 
 # [91] "bonanza - armenia"                                                                      
 # [92] "bonanza-armenia" 
-# 
+df[df$Mill %in% c("bonanza-armenia"),'Mill'] = 'bonanza - armenia'
+
 # 
 # [101] "cafe altura de san ramon"                                                               
 # [102] "cafe de altura san ramon"
-# 
+df[df$Mill %in% c("cafe de altura san ramon"),'Mill'] = 'cafe altura de san ramon'
+
 # 
 # 105] "cafe gourmet de sierra azual sc"                                                        
 # [106] "cafe gourmet de sierra azul sc" 
-# 
+df[df$Mill %in% c("cafe gourmet de sierra azual sc"),'Mill'] = 'cafe gourmet de sierra azul sc'
+
 # 
 # 111] "cafetal el equimite, rancho agroecológico"                                              
 # [112] "cafetal el equimite, rancho agroecológico s.p.r. de r.l." 
-# 
+df[df$Mill %in% c("cafetal el equimite, rancho agroecológico s.p.r. de r.l."),'Mill'] = 'cafetal el equimite, rancho agroecológico'
+
 # 
 # [128] "central kenya coffee mills"                                                             
 # [129] "central kenya mill"
-# 
+df[df$Mill %in% c("central kenya mill"),'Mill'] = 'central kenya coffee mills'
+
 # 
 # [132] "cigrah s.a de c.v"                                                                      
 # [133] "cigrah s.a de c.v."                                                                     
 # [134] "cigrah s.a. de .v."                                                                     
 # [135] "cigrah s.a. de c.v."
-# 
+df[df$Mill %in% c("cigrah s.a de c.v",'cigrah s.a. de .v.','cigrah s.a. de c.v.'),'Mill'] = 'cigrah s.a de c.v.'
+
 # 
 # 
 # "cosautlan de carvajal, ver"                                                             
 # [166] "cosautlan de carvajal, veracruz, méxico"
-# 
+df[df$Mill %in% c("cosautlan de carvajal, ver"),'Mill'] = 'cosautlan de carvajal, veracruz, méxico'
+
 # 
 # 
 # [170] "d.a.e"                                                                                  
 # [171] "dae"                                                                                    
 # [172] "dae ltd
-# 
+df[df$Mill %in% c("d.a.e","dae"),'Mill'] = 'dae ltd'
+
 # 
 # 177] "dragon coffee 龍咖啡"                                                                   
 # [178] "dragon 龍咖啡" 
-# 
+df[df$Mill %in% c("dragon 龍咖啡"),'Mill'] = 'dragon coffee 龍咖'
+
 # 
 # 
 # [216] "exclusive"                                                                              
 # [217] "exclusive coffees s.a," 
-# 
-# 
+df[df$Mill %in% c("exclusive"),'Mill'] = 'exclusive coffees s.a,'
+
+
 # 222] "falcafe s.a. de c.v."                                                                   
 # [223] "falcafe s.a. de c.v. coatepec veracruz" 
-# 
+df[df$Mill %in% c("falcafe s.a. de c.v. coatepec veracruz"),'Mill'] = 'alcafe s.a. de c.v'
+
 # 
 # 
 # [233] "finca los barreales"                                                                    
 # [234] "finca los barreales, teocelo, veracruz"  
-# 
+df[df$Mill %in% c("finca los barreales, teocelo, veracruz"),'Mill'] = 'finca los barreales'
+
 # 
 # [245] "great lakes"                                                                            
 # [246] "great lakes coffee"                                                                     
 # [247] "great lakes coffee uganda"
-# 
+df[df$Mill %in% c("great lakes", "great lakes coffee uganda"),'Mill'] = 'great lakes coffee'
+
 # 
 # 
 # [252] "guo xin ka fei 國昕咖啡"                                                                
 # [253] "guo xing ka fei wang 國姓咖啡王咖啡莊園"
-# 
+df[df$Mill %in% c("guo xing ka fei wang 國姓咖啡王咖啡莊園"),'Mill'] = 'guo xin ka fei 國昕咖啡'
+
 # 
 # [262] "humedo: finca santo tomas pachuj y seco: beneficio palinsa"                             
 # [263] "humedo: finca sto tomas pachuj, seco: beneficio palinsa.
-# 
+df[df$Mill %in% c("humedo: finca sto tomas pachuj, seco: beneficio palinsa."),'Mill'] = 'humedo: finca santo tomas pachuj y seco: beneficio palinsa'
 # 
 # [285] "kawacom"                                                                                
 # [286] "kawacom (u) ltd"                                                                        
 # [287] "kawacom uganda limited"                                                                 
 # [288] "kawacom uganda ltd"                                                                     
 # [289] "kawacom(u)ltd"  
-# 
+df[df$Mill %in% c("kawacom (u) ltd", 'kawacom uganda limited', 'kawacom uganda ltd', 'kawacom(u)ltd'),'Mill'] = 'kawacom'
+
 # 
 # 
 # [336] "mzuzu coffee coop union"                                                                
 # [337] "mzuzu coffee coop union        "                                                        
 # [338] "mzuzu coffee planters coop union" 
-# 
+df[df$Mill %in% c("mzuzu coffee coop union        ", 'mzuzu coffee planters coop union'),'Mill'] = 'mzuzu coffee coop union'
+
 # 
 # [367] "productores de cafe especiales \"el triunfo\", s.c., chiapas"                           
 # [368] "productores de cafes especiales s.c."                                                   
 # [369] "productores de cafes especiales sc" 
-# 
+df[df$Mill %in% c('productores de cafe especiales \"el triunfo\", s.c., chiapas', 'productores de cafes especiales s.c.'),'Mill'] = 'productores de cafes especiales sc'
+
 # 
 # 
 # [380] "rafiki (coffee) limited"                                                                
 # [381] "rafiki coffee limited."                                                                 
 # [382] "rafiki ltd"      
-# 
+df[df$Mill %in% c("rafiki ltd", 'rafiki coffee limited.'),'Mill'] = 'rafiki (coffee) limited'
+
 # 
 # [436] "trilladora agricola"                                                                    
 # [437] "trilladora agricola - bucaramanga"                                                      
 # [438] "trilladora agricola bucaramanga"                                                        
 # [439] "trilladora agrícola de santander"                                                       
 # [440] "trilladora agricola de santander-bucaramanga"
-# 
+df[df$Mill %in% c("trilladora agricola - bucaramanga", 'trilladora agricola bucaramanga',
+                  'trilladora agrícola de santander','trilladora agricola de santander-bucaramanga'),'Mill'] = 'trilladora agricola'
+
 # 
 # 
 # [442] "trilladora boananza"                                                                    
 # [443] "trilladora bonanaza"                                                                    
 # [444] "trilladora bonanza" 
-# 
+df[df$Mill %in% c("trilladora bonanaza", 'trilladora bonanza'),'Mill'] = 'trilladora boananza'
+
 # 
 # 
 # 
@@ -382,16 +527,20 @@ sort(unique(tolower(df$Mill)))
 # [447] "trilladora bonanza-armenia quindio"                                                     
 # [448] "trilladora bonanza-calarca-quindio"   
 # [453] "trrilladora bonanza-armenia"                                                            
-# 
+df[df$Mill %in% c("trilladora bonanza-armenia", 'trilladora bonanza-armenia quindio',
+                  'trilladora bonanza-calarca-quindio', 'trrilladora bonanza-armenia'),'Mill'] = 'trilladora bonanza - armenia quindioa'
+
 # 
 # 
 # 
 # [472] "xicotepec de juarez"                                                                    
 # [473] "xicotepec de juarez, puebla"  
-# 
+df[df$Mill %in% c("xicotepec de juarez, puebla"),'Mill'] = 'xicotepec de juarez'
+
 # 
 # [505] "黑咖啡道"                                                                               
 # [506] "黑咖啡道咖啡"  
+df[df$Mill %in% c("黑咖啡道"),'Mill'] = '黑咖啡道咖啡'
 
 
 
@@ -757,5 +906,3 @@ df[df$Region %in% c('antioquía-betulia', 'antioquía-caicedo',
 # [3] "acatenango"                                                                  
 # [4] "acatenango, chimaltenango"
 df[df$Region %in% c('acatenango, chimaltenango'),'Region'] = 'acatenango'
-
-
