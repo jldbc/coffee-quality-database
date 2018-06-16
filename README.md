@@ -1,5 +1,5 @@
 # coffee-quality-database
-Digitizing 1,400 coffee reviews
+Digitizing 1,340 coffee reviews
 
 # Data
 These data contain reviews of 1312 arabica and 28 robusta coffee beans from the Coffee Quality Institute's trained reviewers. The features include:
